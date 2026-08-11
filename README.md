@@ -1,80 +1,85 @@
 # @projectsociety/mcp-core
 
-Plomberie MCP partagée : registre d'outils, garde de confirmation, journal d'audit,
-chargement de configuration, exécution de processus.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+Shared MCP plumbing: tool registry, confirmation guard, audit log, config loading, process
+running.
 
 ```bash
 npm install @projectsociety/mcp-core
 ```
 
-Extrait de deux serveurs MCP réels — [`hammer-mcp`](https://github.com/ProjectSocietyStudio/hammer-mcp)
-et `gmod-mcp` — plutôt que conçu dans l'abstrait. Ce qui suit dit pourquoi, et surtout ce
-qui est délibérément resté chez les serveurs.
+**Extracted from two real MCP servers rather than designed in the abstract** —
+[`hammer-mcp`](https://github.com/ProjectSocietyStudio/hammer-mcp), which drives the Source-engine
+toolchain, and `gmod-mcp`, which drives a running game server. What follows says why it exists, and
+above all what deliberately stayed behind in each server.
 
-Node ≥ 20. `@modelcontextprotocol/sdk` ≥ 1.30 et `zod` ^3.23 sont des **peer dependencies** :
-c'est le serveur hôte qui les fournit, pour qu'il n'existe qu'une seule instance du SDK.
+Node ≥ 20. `@modelcontextprotocol/sdk` ≥ 1.30 and `zod` ^3.23 are **peer dependencies**: the host
+server provides them, so there is only ever one instance of the SDK.
 
-## Pourquoi il existe
+## Why it exists
 
-Les deux serveurs ont d'abord dupliqué cette plomberie **délibérément** — ~350 lignes entre
-deux dépôts, un paquet partagé aurait été prématuré. Le README de `hammer-mcp` avait écrit
-le seuil de révision : « un troisième serveur MCP, ou le même bug de plomberie corrigé deux
-fois ».
+The two servers duplicated this plumbing **on purpose** — around 350 lines across two repositories,
+where a shared package looked premature. The revision threshold was written down at the time: *a
+third MCP server, or the same plumbing bug fixed twice.*
 
-Ce seuil a été atteint le 11/08/2026, sur deux fronts à la fois :
+It was reached on 11/08/2026, on two fronts at once:
 
-1. **La dérive était déjà là.** `clip()` vivait dans le `registry.ts` de hammer-mcp et se
-   retrouvait recopiée deux fois côté gmod-mcp (`tools/local.ts`, `tools/dev.ts`) ;
-   `stripAnsi()` n'existait que d'un côté, le bloc image `IMAGE_KEY` que de l'autre. Trois
-   divergences sur six fichiers.
-2. **La montée du SDK arrivait.** Passer de `^1.12` à `1.30` — et exploiter ce qu'elle
-   débloque (`outputSchema`, `serverInstructions`, elicitation, notifications de
-   progression) — aurait été à faire et à prouver deux fois.
+1. **The drift was already there.** `clip()` lived in one server's registry and had been copied
+   twice into the other; `stripAnsi()` existed on only one side, the image block on only the other.
+   Three divergences across six files.
+2. **An SDK upgrade was coming.** Going from `^1.12` to `1.30` — and using what it unlocks
+   (`outputSchema`, `serverInstructions`, elicitation, progress notifications) — would have had to
+   be done and proven twice.
 
-## Ce qui monte, ce qui ne monte pas
+## What moves up, and what does not
 
-| Monte | Reste chez le serveur |
+| Moves up | Stays in the server |
 |---|---|
-| `ToolRegistry`, `defineTool`, `isCallAllowed` | `fs/guard.ts` (hammer) — discipline d'écriture propre à ses arbres |
-| `createMcpServer`, `successResult`, blocs image | `bridge/`, `bridge/lock.ts` (gmod) — le verrou et le transport fichier |
-| `AuditLog` | `patch/engine.ts` (gmod) — sauvegarde/restauration de fichiers |
-| `loadConfig`, `findRepoRoot` | le **schéma** de config de chacun |
-| `run`, `clip`, `stripAnsi` | l'enum `Realm` de chacun — `map`/`local` contre `sv`/`cl`/`local` |
+| `ToolRegistry`, `defineTool`, `isCallAllowed` | its write guard — the trees it refuses are its own |
+| `createMcpServer`, `successResult`, image blocks | the file transport and lock of the live-engine server |
+| `AuditLog` | file backup and restore |
+| `loadConfig`, `findRepoRoot` | each server's config **schema** |
+| `run`, `clip`, `stripAnsi` | each server's `Realm` enum — `map`/`local` against `sv`/`cl`/`local` |
 
-Le noyau est **paramétré, pas générique par principe** : `loadConfig` prend la variable
-d'environnement et le nom du répertoire d'état ; `AuditLog` prend le vocabulaire de kinds
-du serveur ; `ToolDef` est générique sur le contexte et sur le realm, si bien que chaque
-serveur garde son propre `defineTool` typé via `makeToolkit`.
+The core is **parameterised, not generic on principle**: `loadConfig` takes the environment
+variable and the state directory name; `AuditLog` takes the server's own vocabulary of entry kinds;
+`ToolDef` is generic over context and realm, so each server keeps its own typed `defineTool` via
+`makeToolkit`.
 
-`installProject` prend le chemin du point d'entrée **en paramètre**. C'est le piège de
-l'extraction : le code d'origine le calculait par `new URL("./index.js", import.meta.url)`,
-qui, déplacé ici, aurait résolu vers le `dist/` du noyau et installé le mauvais binaire.
+`installProject` takes the entry-point path **as a parameter**. That is the trap of extraction: the
+original computed it with `new URL("./index.js", import.meta.url)`, which, moved here, would have
+resolved to the core's own `dist/` and installed the wrong binary.
 
-## Développement
+## The oracle that proves the sharing is real
+
+A passing test proves nothing until it has been shown it can fail — and a "shared" package that was
+in fact copied would pass every test exactly the same way.
+
+So the control is direct: break the guard in `src/registry.ts`, rebuild, and run all three suites.
+Measured 11/08/2026:
+
+| Suite | Result |
+|---|---|
+| `mcp-core` | 2 failures / 21 |
+| `hammer-mcp` | 1 failure / 46 |
+| `gmod-mcp` | 2 failures / 130 |
+
+One byte changed here turns both servers red. That is the property the extraction was for.
+
+## Development
 
 ```bash
 pnpm install
 pnpm build       # tsc -> dist/
 pnpm test        # vitest
-pnpm typecheck   # tsc --noEmit, tests inclus
+pnpm typecheck   # tsc --noEmit, tests included
 ```
 
-Les consommateurs lisent le `dist/` publié. En développement local — un checkout des
-serveurs à côté de celui-ci, consommé par `file:../mcp-core` — **reconstruire est
-nécessaire** pour qu'un changement leur parvienne. Le piège se paie une fois : un `dist/`
-périmé rend les tests verts et le typecheck rouge sur le même arbre.
+Consumers read the published `dist/`. In local development — server checkouts beside this one,
+consuming it through `file:../mcp-core` — **rebuilding is required** for a change to reach them.
+The trap is paid once: a stale `dist/` makes tests green and typecheck red on the same tree.
 
-## L'oracle qui prouve le partage
+## License
 
-Un test qui passe ne prouve rien tant qu'on n'a pas montré qu'il sait échouer, et un
-paquet « partagé » qui serait en réalité recopié passerait tous les tests de la même façon.
-Le contrôle est donc direct : neutraliser la garde dans `src/registry.ts`, reconstruire, et
-lancer les trois suites. Mesuré le 11/08/2026 —
-
-| Suite | Résultat |
-|---|---|
-| `mcp-core` | 2 échecs / 21 |
-| `hammer-mcp` | 1 échec / 46 |
-| `gmod-mcp` | 2 échecs / 130 |
-
-Un seul octet changé ici fait rougir les deux serveurs. C'est la propriété qu'on voulait.
+MIT. See [LICENSE](LICENSE).

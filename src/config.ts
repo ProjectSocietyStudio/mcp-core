@@ -3,8 +3,14 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { z } from "zod";
 
 /**
- * Files that identify the root of the Project Society repo. Both servers walk up looking
- * for the same markers: they are siblings inside it, not standalone tools.
+ * Default markers identifying the root a server anchors its state and its writable trees
+ * to. These two are what the servers this was extracted from look for; they are a
+ * *default*, not a contract -- `findRepoRoot` takes any marker list, and a server whose
+ * root is its own checkout should pass its own (`package.json`, `.git`).
+ *
+ * Whatever the markers, the walk stops at the first directory containing one of them, so
+ * a server nested inside a larger repo resolves to the outer root unless it says
+ * otherwise. That is deliberate: it is where its configuration and state live.
  */
 export const REPO_MARKERS = ["tools/lint.sh", "CLAUDE.md"];
 

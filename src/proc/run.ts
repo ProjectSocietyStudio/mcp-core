@@ -5,6 +5,14 @@ export interface RunOptions {
   env?: NodeJS.ProcessEnv;
   /** Kills the process past this deadline (ms). 0 or undefined means no timeout. */
   timeoutMs?: number;
+  /**
+   * Written to the child's stdin, which is then closed.
+   *
+   * stdin is closed even when this is undefined. A child that reads until EOF -- any
+   * `sys.stdin.read()`, any `cat` -- otherwise waits forever on a pipe nobody will ever
+   * write to, and the symptom is a timeout rather than anything pointing at stdin.
+   */
+  input?: string;
 }
 
 export interface RunResult {
@@ -41,6 +49,13 @@ export function run(
         child.kill("SIGKILL");
       }, opts.timeoutMs);
     }
+
+    // Always end stdin: a child reading to EOF would otherwise hang until the timeout.
+    if (opts.input !== undefined) child.stdin.write(opts.input);
+    child.stdin.end();
+    // A child that exits before draining its stdin makes the write fail; that is its
+    // choice to make, and the exit code is what the caller is waiting on.
+    child.stdin.on("error", () => undefined);
 
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));

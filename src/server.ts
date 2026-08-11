@@ -13,18 +13,21 @@ function textResult(text: string, isError = false): CallToolResult {
  * rest of the object goes out as JSON text, the image as a real image block. Emitting it
  * as text would bill the model for base64 it cannot see.
  */
-export function successResult(result: ToolResult): CallToolResult {
+export function successResult(result: ToolResult, structured = false): CallToolResult {
   const image = result[IMAGE_KEY];
-  if (!isToolImage(image)) return textResult(JSON.stringify(result, null, 2));
+  const body = { ...result };
+  if (isToolImage(image)) delete body[IMAGE_KEY];
 
-  const rest = { ...result };
-  delete rest[IMAGE_KEY];
-  return {
-    content: [
-      { type: "text", text: JSON.stringify(rest, null, 2) },
-      { type: "image", data: image.data, mimeType: image.mimeType },
-    ],
-  };
+  const content: CallToolResult["content"] = [
+    { type: "text", text: JSON.stringify(body, null, 2) },
+  ];
+  if (isToolImage(image)) {
+    content.push({ type: "image", data: image.data, mimeType: image.mimeType });
+  }
+
+  // Only when the tool declared an output schema: the SDK rejects a successful call
+  // that has one and returns no structured content.
+  return { content, ...(structured ? { structuredContent: body } : {}) };
 }
 
 export interface ServerMeta {
@@ -64,6 +67,8 @@ export function createMcpServer<Ctx extends BaseToolContext, Realm extends strin
       {
         description: def.description,
         inputSchema: def.inputSchema,
+        ...(def.outputSchema ? { outputSchema: def.outputSchema } : {}),
+        ...(def.meta ? { _meta: def.meta } : {}),
         annotations: { title: def.name },
       },
       async (args: Record<string, unknown>): Promise<CallToolResult> => {
@@ -91,7 +96,7 @@ export function createMcpServer<Ctx extends BaseToolContext, Realm extends strin
             commandId,
             data: { tool: def.name, ok: true },
           });
-          return successResult(result);
+          return successResult(result, def.outputSchema !== undefined);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           ctx.audit.record({

@@ -62,6 +62,26 @@ export interface ToolDef<
   realm: Realm;
   guarded?: boolean;
   inputSchema: Shape;
+  /**
+   * Shape of the result, when it is worth typing.
+   *
+   * Declaring it is a commitment, not a hint: the SDK refuses a successful call whose
+   * result carries no `structuredContent` matching this schema. `createMcpServer` fills
+   * that in from the handler's return value, so a handler that drifts from its declared
+   * shape fails loudly instead of quietly returning prose.
+   *
+   * Worth it for measurements an agent will compare or compute on. Not worth it for
+   * free-form reports.
+   */
+  outputSchema?: ZodRawShape;
+  /**
+   * Client-specific hints passed straight through as the tool's `_meta`.
+   *
+   * Deliberately untyped: these are per-client conventions, not protocol. Anything here
+   * that a client does not recognise is ignored, so a wrong key is silent -- never assume
+   * one took effect without observing the behaviour it was supposed to change.
+   */
+  meta?: Record<string, unknown>;
   handler: (
     args: z.infer<z.ZodObject<Shape>>,
     ctx: Ctx,

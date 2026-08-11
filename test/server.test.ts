@@ -34,6 +34,22 @@ const tools = [
     handler: () => ({ wrote: true }),
   }),
   defineTool({
+    name: "read_measured",
+    description: "returns a typed measurement",
+    realm: "map",
+    inputSchema: {},
+    outputSchema: { units: z.number(), metres: z.number() },
+    handler: () => ({ units: 31584, metres: 802.2 }),
+  }),
+  defineTool({
+    name: "read_liar",
+    description: "declares a shape and returns another",
+    realm: "map",
+    inputSchema: {},
+    outputSchema: { units: z.number() },
+    handler: () => ({ units: "not a number" }),
+  }),
+  defineTool({
     name: "read_boom",
     description: "throws",
     realm: "map",
@@ -96,6 +112,8 @@ describe("createMcpServer", () => {
       const { tools: listed } = await client.listTools();
       expect(listed.map((t) => t.name).sort()).toEqual([
         "read_boom",
+        "read_liar",
+        "read_measured",
         "read_thing",
         "write_thing",
       ]);
@@ -142,6 +160,43 @@ describe("createMcpServer", () => {
     }
   });
 
+  it("advertises the output schema and returns structured content", async () => {
+    const { client, cleanup } = await connect(META);
+    try {
+      const listed = (await client.listTools()).tools;
+      expect(listed.find((t) => t.name === "read_measured")?.outputSchema).toBeDefined();
+      // A tool with no declared shape must NOT claim one -- otherwise the SDK
+      // would reject every one of its successful calls.
+      expect(listed.find((t) => t.name === "read_thing")?.outputSchema).toBeUndefined();
+
+      const r = await client.callTool({ name: "read_measured", arguments: {} });
+      expect(r.structuredContent).toEqual({ units: 31584, metres: 802.2 });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("refuses a result that contradicts its declared output schema", async () => {
+    // The negative control for the test above: it proves the schema is enforced
+    // rather than merely advertised. Without it, a handler could drift from its
+    // declared shape and every test would still pass.
+    //
+    // The SDK turns the violation into an error result rather than rejecting, so
+    // the transport survives a mismatched tool -- worth pinning, because it is the
+    // difference between one broken tool and a dead server.
+    const { client, cleanup } = await connect(META);
+    try {
+      const r = await client.callTool({ name: "read_liar", arguments: {} });
+      expect(r.isError).toBe(true);
+      expect((r.content as { text: string }[])[0]!.text).toMatch(/validation/i);
+
+      const after = await client.callTool({ name: "read_thing", arguments: { n: 1 } });
+      expect(after.isError).toBeFalsy();
+    } finally {
+      cleanup();
+    }
+  });
+
   it("turns a thrown handler into an error result, not a dead transport", async () => {
     const { client, cleanup } = await connect(META);
     try {
@@ -150,7 +205,7 @@ describe("createMcpServer", () => {
       expect((r.content as { text: string }[])[0]!.text).toContain("read_boom failed");
       // The connection must survive it.
       const after = await client.listTools();
-      expect(after.tools).toHaveLength(3);
+      expect(after.tools).toHaveLength(5);
     } finally {
       cleanup();
     }

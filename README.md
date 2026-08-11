@@ -1,12 +1,18 @@
-# @rolists/mcp-core
+# @projectsociety/mcp-core
 
-Plomberie MCP partagée par `gmod-mcp` et `hammer-mcp` : registre d'outils, garde de
-confirmation, journal d'audit, chargement de configuration, exécution de processus.
+Plomberie MCP partagée : registre d'outils, garde de confirmation, journal d'audit,
+chargement de configuration, exécution de processus.
 
-Dépôt séparé, cloné en frère des deux serveurs dans le workspace Project Society. Le
-`.gitignore` parent ignore tout à la racine (`/*`) puis ré-autorise nommément : ce dossier
-lui est donc invisible sans qu'aucune ligne y soit ajoutée, exactement comme les deux
-serveurs.
+```bash
+npm install @projectsociety/mcp-core
+```
+
+Extrait de deux serveurs MCP réels — [`hammer-mcp`](https://github.com/ProjectSocietyStudio/hammer-mcp)
+et `gmod-mcp` — plutôt que conçu dans l'abstrait. Ce qui suit dit pourquoi, et surtout ce
+qui est délibérément resté chez les serveurs.
+
+Node ≥ 20. `@modelcontextprotocol/sdk` ≥ 1.30 et `zod` ^3.23 sont des **peer dependencies** :
+c'est le serveur hôte qui les fournit, pour qu'il n'existe qu'une seule instance du SDK.
 
 ## Pourquoi il existe
 
@@ -53,8 +59,10 @@ pnpm test        # vitest
 pnpm typecheck   # tsc --noEmit, tests inclus
 ```
 
-Les deux serveurs le consomment par `file:../mcp-core` et lisent son `dist/` : **le
-reconstruire est nécessaire** pour qu'un changement leur parvienne.
+Les consommateurs lisent le `dist/` publié. En développement local — un checkout des
+serveurs à côté de celui-ci, consommé par `file:../mcp-core` — **reconstruire est
+nécessaire** pour qu'un changement leur parvienne. Le piège se paie une fois : un `dist/`
+périmé rend les tests verts et le typecheck rouge sur le même arbre.
 
 ## L'oracle qui prouve le partage
 

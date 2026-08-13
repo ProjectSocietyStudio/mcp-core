@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import type { BaseToolContext, ToolRegistry, ToolResult } from "./registry.js";
 import { IMAGE_KEY, isCallAllowed, isToolImage } from "./registry.js";
 
@@ -73,6 +74,7 @@ export function createMcpServer<Ctx extends BaseToolContext, Realm extends strin
       },
       async (args: Record<string, unknown>): Promise<CallToolResult> => {
         const commandId = randomUUID();
+        const startedAt = Date.now();
         ctx.audit.record({
           kind: "tool_call",
           commandId,
@@ -91,10 +93,44 @@ export function createMcpServer<Ctx extends BaseToolContext, Realm extends strin
 
         try {
           const result = await def.handler(args, ctx);
+
+          // Validated here rather than left to the SDK, because where it is checked
+          // decides what the log says. The SDK validates downstream of everything this
+          // wrapper can see, so a handler that succeeded and then failed validation was
+          // recorded `ok: true` -- and one real session's log showed a tool called three
+          // times without incident while the caller was looking at a hard protocol error
+          // on one of them.
+          if (def.outputSchema) {
+            const parsed = z.object(def.outputSchema).safeParse(result);
+            if (!parsed.success) {
+              const first = parsed.error.issues[0];
+              const where = first ? `${first.path.join(".") || "(root)"}: ${first.message}` : "";
+              // The retry warning is the load-bearing half. This error arrives after the
+              // handler has done whatever it does, and a caller that retries a writer
+              // applies its work a second time.
+              const message =
+                `${def.name} returned a result its declared output schema rejects -- ${where}. ` +
+                `The handler had already run, so anything it writes or executes has happened: ` +
+                `do NOT retry, read the state back instead. This is a defect in the tool.`;
+              ctx.audit.record({
+                kind: "tool_result",
+                commandId,
+                data: {
+                  tool: def.name,
+                  ok: false,
+                  ms: Date.now() - startedAt,
+                  error: message,
+                  handlerRan: true,
+                },
+              });
+              return textResult(message, true);
+            }
+          }
+
           ctx.audit.record({
             kind: "tool_result",
             commandId,
-            data: { tool: def.name, ok: true },
+            data: { tool: def.name, ok: true, ms: Date.now() - startedAt },
           });
           return successResult(result, def.outputSchema !== undefined);
         } catch (err) {
@@ -102,7 +138,7 @@ export function createMcpServer<Ctx extends BaseToolContext, Realm extends strin
           ctx.audit.record({
             kind: "error",
             commandId,
-            data: { tool: def.name, error: message },
+            data: { tool: def.name, error: message, ms: Date.now() - startedAt },
           });
           return textResult(`${def.name} failed: ${message}`, true);
         }

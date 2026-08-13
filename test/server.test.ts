@@ -5,7 +5,7 @@ import { z } from "zod";
 import { AuditLog } from "../src/logger.js";
 import { makeToolkit, type BaseToolContext } from "../src/registry.js";
 import { createMcpServer, type ServerMeta } from "../src/server.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -73,7 +73,12 @@ async function connect(meta: ServerMeta, allowlist: string[] = []) {
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0" });
   await Promise.all([client.connect(clientT), server.connect(serverT)]);
-  return { client, ctx, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  const entries = (): Array<{ kind: string; data: Record<string, unknown> }> =>
+    readFileSync(ctx.audit.path, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { kind: string; data: Record<string, unknown> });
+  return { client, ctx, entries, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 const META: ServerMeta = {
@@ -181,17 +186,68 @@ describe("createMcpServer", () => {
     // rather than merely advertised. Without it, a handler could drift from its
     // declared shape and every test would still pass.
     //
-    // The SDK turns the violation into an error result rather than rejecting, so
-    // the transport survives a mismatched tool -- worth pinning, because it is the
-    // difference between one broken tool and a dead server.
+    // The violation becomes an error result rather than a rejection, so the transport
+    // survives a mismatched tool -- worth pinning, because it is the difference between
+    // one broken tool and a dead server.
+    //
+    // The check now runs in this wrapper rather than in the SDK downstream of it, which
+    // is why the wording being matched is ours. That move is the point: validating where
+    // the audit log can see it is what stopped these failures being recorded as
+    // successes.
     const { client, cleanup } = await connect(META);
     try {
       const r = await client.callTool({ name: "read_liar", arguments: {} });
       expect(r.isError).toBe(true);
-      expect((r.content as { text: string }[])[0]!.text).toMatch(/validation/i);
+      expect((r.content as { text: string }[])[0]!.text).toMatch(/output schema rejects/i);
 
       const after = await client.callTool({ name: "read_thing", arguments: { n: 1 } });
       expect(after.isError).toBeFalsy();
+    } finally {
+      cleanup();
+    }
+  });
+
+  /**
+   * The audit log's blind spot, found by reading it back after a real session and not
+   * believing it.
+   *
+   * A handler that succeeds and then fails output validation was recorded `ok: true`,
+   * because the recording happened before the SDK ever looked at the shape. So the log
+   * said a tool had been called three times without incident while the caller was staring
+   * at a hard protocol error on one of them -- and that error came *after* the tool had
+   * written a file. The objective half of a measurement missed the most dangerous bug of
+   * the session it was measuring.
+   */
+  it("records an output-schema failure as a failure, not as a success", async () => {
+    const { client, entries, cleanup } = await connect(META);
+    try {
+      await client.callTool({ name: "read_liar", arguments: {} });
+
+      const results = entries().filter((e) => e.kind === "tool_result" || e.kind === "error");
+      const mine = results.filter((e) => e.data.tool === "read_liar");
+      expect(mine).toHaveLength(1);
+      expect(mine[0]!.data.ok).toBe(false);
+      expect(String(mine[0]!.data.error)).toMatch(/output/i);
+
+      // The half that matters more than the label: whatever the handler did, it did.
+      // An error that does not say so invites a retry, and a retry of a writer applies
+      // its work twice.
+      expect(String(mine[0]!.data.error)).toMatch(/already ran|had already/i);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("records how long each call took", async () => {
+    const { client, entries, cleanup } = await connect(META);
+    try {
+      await client.callTool({ name: "read_thing", arguments: { n: 1 } });
+      const result = entries().find(
+        (e) => e.kind === "tool_result" && e.data.tool === "read_thing",
+      );
+      expect(result).toBeDefined();
+      expect(typeof result!.data.ms).toBe("number");
+      expect(result!.data.ms as number).toBeGreaterThanOrEqual(0);
     } finally {
       cleanup();
     }

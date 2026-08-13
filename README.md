@@ -67,6 +67,23 @@ Measured 11/08/2026:
 
 One byte changed here turns both servers red. That is the property the extraction was for.
 
+## What the tool wrapper records
+
+Every call goes through one wrapper, and what it writes to the audit log is a contract the
+servers' own tooling reads back. Each `tool_result` and `error` carries `ms`; a result also
+carries `ok`, and a failure carries `error`.
+
+**A result that fails its own declared output schema is recorded as a failure**, which is less
+obvious than it sounds. The SDK validates downstream of anything this wrapper can see, so a
+handler that succeeded and then failed validation used to be recorded `ok: true` — one real
+session's log showed a tool called three times without incident while the caller was looking at
+a hard protocol error on one of them, raised *after* that tool had written a file.
+
+So the validation happens here instead, and the error it produces says the thing the SDK's own
+wording does not: **the handler already ran, so do not retry — read the state back.** A retry is
+what an error invites, and retrying a writer applies its work twice. Such entries carry
+`handlerRan: true`.
+
 ## Development
 
 ```bash

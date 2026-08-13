@@ -1,6 +1,6 @@
 {
   "name": "@projectsociety/mcp-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared MCP plumbing: tool registry, guarded calls, audit log, config loading, process running",
   "license": "MIT",
   "author": "Project Society Studio",
@@ -10,7 +10,12 @@
     "url": "git+https://github.com/ProjectSocietyStudio/mcp-core.git"
   },
   "bugs": "https://github.com/ProjectSocietyStudio/mcp-core/issues",
-  "keywords": ["mcp", "model-context-protocol", "tool-registry", "audit-log"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "tool-registry",
+    "audit-log"
+  ],
   "type": "module",
   "exports": {
     ".": "./dist/index.js"
